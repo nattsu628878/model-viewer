@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D Model Viewer</title>
+<style>
+  :root {
+    --bg:#0e1017; --panel:#171b26; --line:#2a3040; --fg:#e7eaf2; --mut:#8b93a7;
+    --acc:#7fe3b0; --btn:#222838; --btn-h:#2c3346;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#eef1f6; --panel:#ffffff; --line:#d7dce6; --fg:#1a1e28; --mut:#5b6270;
+            --acc:#1f9d63; --btn:#e7ebf2; --btn-h:#dbe1ec; }
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body {
+    background:var(--bg); color:var(--fg); display:flex; flex-direction:column;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  header {
+    display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center;
+    padding:12px 16px; border-bottom:1px solid var(--line); background:var(--panel);
+  }
+  h1 { font-size:15px; margin:0; letter-spacing:.02em; }
+  h1 .dot { color:var(--acc); }
+  .spacer { flex:1 1 auto; }
+  .ctl { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--mut); }
+  select, button, label.file {
+    font:inherit; font-size:12px; color:var(--fg); background:var(--btn);
+    border:1px solid var(--line); border-radius:7px; padding:6px 10px; cursor:pointer;
+  }
+  select:hover, button:hover, label.file:hover { background:var(--btn-h); }
+  button.on { border-color:var(--acc); color:var(--acc); }
+  label.file input { display:none; }
+  main { flex:1 1 auto; position:relative; min-height:0; }
+  model-viewer {
+    width:100%; height:100%; background:
+      radial-gradient(120% 120% at 50% 0%, color-mix(in srgb, var(--panel) 70%, transparent), transparent 70%);
+    --poster-color:transparent;
+  }
+  #drop {
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    background:color-mix(in srgb, var(--acc) 16%, transparent);
+    border:2px dashed var(--acc); font-size:15px; color:var(--fg); pointer-events:none;
+  }
+  main.drag #drop { display:flex; }
+  .hint { position:absolute; left:12px; bottom:10px; font-size:11px; color:var(--mut);
+          background:color-mix(in srgb, var(--panel) 80%, transparent); padding:4px 8px;
+          border-radius:6px; border:1px solid var(--line); }
+  #err { position:absolute; left:50%; top:16px; transform:translateX(-50%);
+         font-size:12px; color:#ff9c9c; background:#2a1620; border:1px solid #5a2a34;
+         padding:6px 12px; border-radius:7px; display:none; }
+</style>
+<script type="module"
+  src="https://cdn.jsdelivr.net/npm/@google/model-viewer@4.0.0/dist/model-viewer.min.js"></script>
+</head>
+<body>
+<header>
+  <h1><span class="dot">◆</span> 3D Model Viewer</h1>
+  <div class="ctl">
+    <span>model</span>
+    <select id="pick"></select>
+  </div>
+  <label class="file">glbを開く<input id="file" type="file" accept=".glb,.gltf,model/gltf-binary"></label>
+  <div class="spacer"></div>
+  <button id="rot" class="on">⟳ 自動回転</button>
+  <button id="reset">視点リセット</button>
+  <button id="wire">ワイヤー</button>
+</header>
+<main id="stage">
+  <model-viewer id="mv"
+    camera-controls
+    auto-rotate auto-rotate-delay="0" rotation-per-second="18deg"
+    interaction-prompt="none"
+    touch-action="pan-y"
+    shadow-intensity="0.9" shadow-softness="0.8"
+    exposure="1.05" tone-mapping="neutral"
+    min-camera-orbit="auto auto auto" max-camera-orbit="auto auto auto"
+    camera-orbit="35deg 68deg 105%" field-of-view="28deg">
+  </model-viewer>
+  <div id="drop">ここに .glb をドロップ</div>
+  <div class="hint">ドラッグで回転 ・ ホイールでズーム ・ 右ドラッグで平行移動</div>
+  <div id="err"></div>
+</main>
+<script>
+  // 同梱モデル（models/ 以下）。ここに足せば選択肢が増える。
+  const MODELS = [
+    { name: "KORG minilogue v16 (最新)", file: "models/minilogue_v16.glb" },
+    { name: "KORG minilogue v09",        file: "models/minilogue_v09.glb" },
+  ];
+  const mv    = document.getElementById('mv');
+  const pick  = document.getElementById('pick');
+  const rot   = document.getElementById('rot');
+  const reset = document.getElementById('reset');
+  const wire  = document.getElementById('wire');
+  const file  = document.getElementById('file');
+  const stage = document.getElementById('stage');
+  const err   = document.getElementById('err');
+  const DEFAULT_ORBIT = "35deg 68deg 105%";
+
+  MODELS.forEach((m, i) => {
+    const o = document.createElement('option');
+    o.value = m.file; o.textContent = m.name; pick.appendChild(o);
+  });
+  function setSrc(url) { mv.src = url; }
+  setSrc(MODELS[0].file);
+
+  pick.addEventListener('change', () => setSrc(pick.value));
+
+  rot.addEventListener('click', () => {
+    const on = mv.toggleAttribute('auto-rotate');
+    rot.classList.toggle('on', on);
+  });
+
+  reset.addEventListener('click', () => {
+    mv.cameraOrbit = DEFAULT_ORBIT;
+    mv.fieldOfView = "28deg";
+    mv.resetTurntableRotation();
+  });
+
+  // ワイヤーフレーム風トグル（model-viewer は直接非対応 → 露出/トーンで簡易表現）
+  let wireOn = false;
+  wire.addEventListener('click', () => {
+    wireOn = !wireOn;
+    wire.classList.toggle('on', wireOn);
+    // 疑似: フラット寄り表示（露出↑・影↓）。本格ワイヤーはthree.js版が必要。
+    mv.exposure = wireOn ? 1.5 : 1.05;
+    mv.shadowIntensity = wireOn ? 0 : 0.9;
+  });
+
+  // ローカルglbのドラッグ&ドロップ / ファイル選択
+  function loadLocal(f) {
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    // 選択肢に追加
+    let opt = [...pick.options].find(o => o.dataset.local);
+    if (!opt) { opt = document.createElement('option'); opt.dataset.local = "1"; pick.appendChild(opt); }
+    opt.value = url; opt.textContent = "（読込) " + f.name; pick.value = url;
+    setSrc(url);
+  }
+  file.addEventListener('change', e => loadLocal(e.target.files[0]));
+  ['dragenter','dragover'].forEach(ev => stage.addEventListener(ev, e => {
+    e.preventDefault(); stage.classList.add('drag');
+  }));
+  ['dragleave','drop'].forEach(ev => stage.addEventListener(ev, e => {
+    e.preventDefault(); if (ev !== 'dragleave' || e.target === stage) stage.classList.remove('drag');
+  }));
+  stage.addEventListener('drop', e => {
+    const f = [...e.dataTransfer.files].find(f => /\.(glb|gltf)$/i.test(f.name));
+    loadLocal(f);
+  });
+
+  mv.addEventListener('error', () => {
+    err.textContent = "モデルの読み込みに失敗しました"; err.style.display = "block";
+    setTimeout(() => err.style.display = "none", 4000);
+  });
+  mv.addEventListener('load', () => { err.style.display = "none"; });
+</script>
+</body>
+</html>
